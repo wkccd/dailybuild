@@ -4,51 +4,42 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-
+  contents: read
 
 jobs:
   sync:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout target repository
-        uses: actions/checkout@v4
-
       - name: Download workflow files from source repo
         env:
           SOURCE_REPO: wkccd/CloudRunFilesBuilder
           SOURCE_REF: 1c5f6c26d328639b4630a0fe1df5d5fef4a6b167
-          TARGET_DIR: .github/workflows
+          TARGET_DIR: workflows
         run: |
           set -euo pipefail
           mkdir -p "$TARGET_DIR"
 
-          curl -fsSL "https://api.github.com/repos/$SOURCE_REPO/contents/$TARGET_DIR?ref=$SOURCE_REF" \
-            | jq -r '.[] | select(.name | endswith(".yml") or endswith(".yaml")) | .download_url' \
-            > /tmp/workflow_urls.txt
+          curl -fsSL "https://api.github.com/repos/$SOURCE_REPO/contents/.github/workflows?ref=$SOURCE_REF" \
+            | jq -r '.[] | select(.name | endswith(".yml") or endswith(".yaml")) | [.name, .download_url] | @tsv' \
+            > /tmp/workflow_files.tsv
 
-          if [ ! -s /tmp/workflow_urls.txt ]; then
+          if [ ! -s /tmp/workflow_files.tsv ]; then
             echo "No workflow files found in source repository."
             exit 1
           fi
 
-          while IFS= read -r url; do
-            filename="$(basename "$url")"
+          while IFS=$'\t' read -r filename url; do
             curl -fsSL "$url" -o "$TARGET_DIR/$filename"
             echo "Downloaded: $TARGET_DIR/$filename"
-          done < /tmp/workflow_urls.txt
+          done < /tmp/workflow_files.tsv
 
-      - name: Commit and push changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows
+          echo "Downloaded $(find "$TARGET_DIR" -maxdepth 1 -type f | wc -l) workflow files."
 
-          if git diff --cached --quiet; then
-            echo "No workflow changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore: sync workflows from CloudRunFilesBuilder"
-          git push
+      - name: Upload workflow files as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudrunfilesbuilder-workflows
+          path: workflows/
+          if-no-files-found: error
+          retention-days: 7
