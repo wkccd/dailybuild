@@ -1,0 +1,133 @@
+#=================================================
+# https://github.com/wukongdaily/RunFilesBuilder
+# Description: Build RunFiles using GitHub Actions
+# Lisence: MIT
+# Author: wukongdaily
+# Blog: wkdaily.cpolar.cn
+#=================================================
+
+name: Build 25.12 nikki
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Fetch latest release tag from nikki
+        run: |
+          release_json=$(curl -fsSL https://api.github.com/repos/nikkinikki-org/OpenWrt-nikki/releases/latest)
+          latest_tag=$(printf '%s' "$release_json" | jq -r '.tag_name // empty')
+
+          if [ -z "$latest_tag" ]; then
+            echo "Failed to get the latest nikki release tag."
+            exit 1
+          fi
+
+          echo "LATEST_TAG=$latest_tag" >> "$GITHUB_ENV"
+
+      - name: Clone makeself repository
+        run: git clone https://github.com/megastep/makeself.git
+
+      - name: Download latest nikki files
+        run: |
+          release_json=$(curl -fsSL https://api.github.com/repos/nikkinikki-org/OpenWrt-nikki/releases/latest)
+
+          assets=(
+            "nikki_aarch64_cortex-a53-openwrt-25.12.tar.gz"
+            "nikki_aarch64_generic-openwrt-25.12.tar.gz"
+            "nikki_x86_64-openwrt-25.12.tar.gz"
+          )
+
+          for asset in "${assets[@]}"; do
+            url=$(printf '%s' "$release_json" | jq -r --arg name "$asset" \
+              '.assets[] | select(.name == $name) | .browser_download_url' | head -n 1)
+
+            if [ -z "$url" ]; then
+              echo "Release asset not found: $asset"
+              exit 1
+            fi
+
+            curl -fL "$url" -o "$asset"
+          done
+
+          mkdir -p \
+            nikki_aarch64_cortex-a53-openwrt-25.12 \
+            nikki_aarch64_generic-openwrt-25.12 \
+            nikki_x86_64-openwrt-25.12
+
+          tar -xzf nikki_aarch64_cortex-a53-openwrt-25.12.tar.gz \
+            -C nikki_aarch64_cortex-a53-openwrt-25.12
+          tar -xzf nikki_aarch64_generic-openwrt-25.12.tar.gz \
+            -C nikki_aarch64_generic-openwrt-25.12
+          tar -xzf nikki_x86_64-openwrt-25.12.tar.gz \
+            -C nikki_x86_64-openwrt-25.12
+
+      - name: Organize APK files for each architecture
+        run: |
+          mkdir -p nikki_x86_64 nikki_aarch64_cortex-a53 nikki_aarch64_generic
+
+          cp nikki_x86_64-openwrt-25.12/*.apk nikki_x86_64/
+          cp nikki_aarch64_cortex-a53-openwrt-25.12/*.apk nikki_aarch64_cortex-a53/
+          cp nikki_aarch64_generic-openwrt-25.12/*.apk nikki_aarch64_generic/
+
+      - name: Create install.sh scripts
+        run: |
+          cat <<'EOF' > nikki_x86_64/install.sh
+          #!/bin/sh
+          set -e
+          apk add --allow-untrusted ./*.apk
+          EOF
+          chmod +x nikki_x86_64/install.sh
+
+          cat <<'EOF' > nikki_aarch64_cortex-a53/install.sh
+          #!/bin/sh
+          set -e
+          apk add --allow-untrusted ./*.apk
+          EOF
+          chmod +x nikki_aarch64_cortex-a53/install.sh
+
+          cat <<'EOF' > nikki_aarch64_generic/install.sh
+          #!/bin/sh
+          set -e
+          apk add --allow-untrusted ./*.apk
+          EOF
+          chmod +x nikki_aarch64_generic/install.sh
+
+      - name: Move nikki directories to makeself
+        run: |
+          mv nikki_x86_64 makeself/
+          mv nikki_aarch64_cortex-a53 makeself/
+          mv nikki_aarch64_generic makeself/
+
+      - name: Create self-extracting packages
+        run: |
+          cd makeself
+          ./makeself.sh nikki_x86_64/ "nikki_${{ env.LATEST_TAG }}_x86_64.run" "by github action" ./install.sh
+          ./makeself.sh nikki_aarch64_cortex-a53/ "nikki_${{ env.LATEST_TAG }}_aarch64_cortex-a53.run" "by github action" ./install.sh
+          ./makeself.sh nikki_aarch64_generic/ "nikki_${{ env.LATEST_TAG }}_aarch64_generic.run" "by github action" ./install.sh
+
+      - name: Check file sizes
+        run: ls -lh makeself/nikki_*.run
+
+      - name: Set tag name
+        id: vars
+        run: |
+          TODAY=$(date -u -d '+8 hour' +'%Y-%m-%d')
+          echo "tag_name=$TODAY" >> "$GITHUB_ENV"
+
+      - name: Upload run files as release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.tag_name }}
+          name: "Daily Build - ${{ env.tag_name }}"
+          files: makeself/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body_path: info/info.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
