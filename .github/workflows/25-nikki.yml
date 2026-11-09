@@ -78,26 +78,17 @@ jobs:
 
       - name: Create install.sh scripts
         run: |
-          cat <<'EOF' > nikki_x86_64/install.sh
+          cat <<'EOF' > install.sh
           #!/bin/sh
           set -e
+          apk update
           apk add --allow-untrusted ./*.apk
           EOF
-          chmod +x nikki_x86_64/install.sh
+          chmod +x install.sh
 
-          cat <<'EOF' > nikki_aarch64_cortex-a53/install.sh
-          #!/bin/sh
-          set -e
-          apk add --allow-untrusted ./*.apk
-          EOF
-          chmod +x nikki_aarch64_cortex-a53/install.sh
-
-          cat <<'EOF' > nikki_aarch64_generic/install.sh
-          #!/bin/sh
-          set -e
-          apk add --allow-untrusted ./*.apk
-          EOF
-          chmod +x nikki_aarch64_generic/install.sh
+          cp install.sh nikki_x86_64/
+          cp install.sh nikki_aarch64_cortex-a53/
+          cp install.sh nikki_aarch64_generic/
 
       - name: Move nikki directories to makeself
         run: |
